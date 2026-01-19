@@ -243,6 +243,23 @@ def render_frame_optimized(frame, widget_size, out_frame_main, out_frame_small):
     return out_frame_main, out_frame_small
 
 
+def draw_capture_grid(region, x_positions, y_positions):
+    """
+    Draw a 1px grid with 50% black over a scaled region (numpy array HxWx3 RGB).
+    x_positions: x coordinates for vertical lines (1px each)
+    y_positions: y coordinates for horizontal lines (1px each)
+    """
+    h, w = region.shape[0], region.shape[1]
+    mask = np.zeros((h, w), dtype=bool)
+    for y in y_positions:
+        if 0 <= y < h:
+            mask[y, :] = True
+    for x in x_positions:
+        if 0 <= x < w:
+            mask[:, x] = True
+    region[mask] = (region[mask].astype(np.float64) * 0.5).astype(np.uint8)
+
+
 def get_capture_region(frame, widget_size, capture_main):
     """
     Return the raw borderless region to capture based on widget size.
@@ -280,8 +297,34 @@ def capture_screenshot(frame):
     if region is None:
         return
 
-    # Convert region to a Pygame surface (width x height x 3 -> transpose for surfarray)
-    surface = pygame.surfarray.make_surface(np.transpose(region, (1, 0, 2)))
+    h, w = region.shape[0], region.shape[1]
+    if (h, w) == (128, 128):
+        # Scale 4x, then draw grid on scaled surface
+        scaled = np.zeros((128 * SCALE_FACTOR, 128 * SCALE_FACTOR, 3), dtype=np.uint8)
+        for y in range(128):
+            y_start = y * SCALE_FACTOR
+            for x in range(128):
+                x_start = x * SCALE_FACTOR
+                scaled[y_start : y_start + SCALE_FACTOR, x_start : x_start + SCALE_FACTOR] = region[y, x]
+        draw_capture_grid(scaled, [4 * i for i in range(1, 128)], [4 * i for i in range(1, 128)])
+        surface = pygame.surfarray.make_surface(np.transpose(scaled, (1, 0, 2)))
+    elif (h, w) == (32, 64):
+        # Scale like small surface, then draw grid
+        scaled = np.zeros((176, 342, 3), dtype=np.uint8)
+        for y in range(32):
+            y_start = int(y * SMALL_SCALE_Y)
+            for x in range(64):
+                x_start = int(x * SMALL_SCALE_X)
+                scaled[y_start : y_start + SCALE_FACTOR, x_start : x_start + SCALE_FACTOR] = region[y, x]
+        draw_capture_grid(
+            scaled,
+            [int(i * SMALL_SCALE_X) for i in range(1, 64)],
+            [int(i * SMALL_SCALE_Y) for i in range(1, 32)],
+        )
+        surface = pygame.surfarray.make_surface(np.transpose(scaled, (1, 0, 2)))
+    else:
+        # No scaling, no grid
+        surface = pygame.surfarray.make_surface(np.transpose(region, (1, 0, 2)))
 
     # Ensure capture directory exists next to emulator.py
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -317,11 +360,16 @@ def capture_borderless_screenshot(frame):
             main_scaled[
                 y_start : y_start + SCALE_FACTOR, x_start : x_start + SCALE_FACTOR
             ] = main_region[y, x]
+    # Draw 1px grid at 50% black on scaled main: 127 H + 127 V
+    draw_capture_grid(
+        main_scaled,
+        [4 * i for i in range(1, 128)],
+        [4 * i for i in range(1, 128)],
+    )
 
     # Scale small region using SMALL_SCALE_X and SMALL_SCALE_Y without borders
     # Use the same dimensions as out_frame_small for consistency
     small_scaled = np.zeros((176, 342, 3), dtype=np.uint8)
-
     for y in range(32):
         y_start = int(y * SMALL_SCALE_Y)
         for x in range(64):
@@ -331,6 +379,12 @@ def capture_borderless_screenshot(frame):
             small_scaled[
                 y_start : y_start + SCALE_FACTOR, x_start : x_start + SCALE_FACTOR
             ] = pixel
+    # Draw 1px grid at 50% black on scaled small: 31 H + 63 V
+    draw_capture_grid(
+        small_scaled,
+        [int(i * SMALL_SCALE_X) for i in range(1, 64)],
+        [int(i * SMALL_SCALE_Y) for i in range(1, 32)],
+    )
 
     # Convert to pygame surfaces
     surface_main_scaled = pygame.surfarray.make_surface(
